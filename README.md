@@ -2,7 +2,13 @@
 
 > 仿 Telegram 极简风格的 QQ 网页客户端 —— 聊天，本该如此优雅。
 
-![demo](docs/demo1.jpg)
+![demo](docs/1.jpg)
+
+![demo](docs/2.jpg)
+
+![demo](docs/3.jpg)
+
+![demo](docs/4.jpg)
 
 ## ✨ 特性
 
@@ -13,44 +19,10 @@
 - **🎨 个性定制** — 8 套主题配色 × 13 张精选壁纸 × 浅色 / 深色 / 夜间三重视觉模式，可调气泡颜色与圆度
 - **🔧 进阶功能** — 阅后即撤、AI 润色、定时发送、表格投票、一键分离模式等
 
-![demo](docs/demo2.jpg)
+## ⭐ 支持项目
 
-## 🚀 快速开始
+项目仍在开发中，当前仓库仅作宣传展示。如果你觉得有意思，欢迎点个 ⭐ Star 支持一下！
 
-```bash
-# 1. 安装依赖
-npm install
+## 📄 免责声明
 
-# 2. 启动服务
-node server-proxy.cjs
-
-# 3. 浏览器打开
-http://127.0.0.1:8098/
-```
-
-> 需要配合 NapCat 使用（QQ 协议层），详见项目文档。
-
-## 📁 项目结构
-
-```
-emt-qq-client/
-├── server-proxy.cjs    # 本地代理服务（静态资源 + API 中转）
-├── start.bat           # 一键启动脚本
-├── dist2/              # 客户端
-│   ├── qq-client.html  # 主客户端页面
-│   ├── tgs/            # 动态 emoji 素材
-│   ├── st_dn/ st_pm/   # 动态贴纸素材
-│   ├── st_fl/ st_du/
-│   └── bg*.webp/png    # 壁纸素材
-└── README.md
-```
-
-## 🛠️ 技术栈
-
-- HTML / CSS / JavaScript（原生，零框架）
-- Lottie 动画渲染
-- WebSocket 实时通信
-
-## 📄 License
-
-MIT
+本项目仅供学习交流使用，所有动态表情、贴纸、壁纸等素材版权归原作者所有。如涉及侵权，请联系删除。
