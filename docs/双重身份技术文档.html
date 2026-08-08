@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EMT·QQ 双账号架构技术文档</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#fff;color:#222;font-family:"Microsoft YaHei","PingFang SC","Segoe UI",Arial,sans-serif;line-height:1.8;font-size:15px}
+.doc{max-width:860px;margin:0 auto;padding:48px 40px 80px}
+/* 标题 */
+h1{font-size:26px;font-weight:700;color:#000;border-bottom:2px solid #1a1a1a;padding-bottom:14px;margin-bottom:6px}
+.meta{font-size:13px;color:#666;margin-bottom:30px}
+h2{font-size:19px;font-weight:700;color:#000;margin:36px 0 12px;padding-left:10px;border-left:4px solid #1a1a1a}
+h3{font-size:16px;font-weight:700;color:#111;margin:20px 0 8px}
+p{margin:8px 0;text-align:justify}
+ul,ol{margin:8px 0 8px 24px}
+li{margin:4px 0}
+/* 代码 */
+pre{background:#f6f8fa;border:1px solid #d0d7de;border-radius:6px;padding:14px 16px;overflow-x:auto;font-family:Consolas,"Courier New",monospace;font-size:13px;line-height:1.6;color:#24292f;margin:10px 0}
+code{font-family:Consolas,"Courier New",monospace;font-size:13px;background:#f0f1f3;padding:1px 5px;border-radius:3px;color:#c7254e}
+pre code{background:none;padding:0;color:inherit}
+/* 表格 */
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px}
+th,td{border:1px solid #d0d7de;padding:8px 12px;text-align:left}
+th{background:#f6f8fa;font-weight:600}
+/* 说明框 */
+.note{border:1px solid #d0d7de;border-left:4px solid #1a1a1a;background:#fafbfc;padding:12px 16px;margin:14px 0;border-radius:0 6px 6px 0;font-size:14px}
+.note .t{font-weight:700;margin-bottom:4px}
+/* 免责声明 */
+.disclaimer{border:1px solid #ccc;border-left:4px solid #999;background:#fafafa;padding:16px 18px;margin:40px 0 0;font-size:13px;color:#555}
+.disclaimer b{color:#333}
+/* 目录 */
+.toc{background:#fafbfc;border:1px solid #d0d7de;border-radius:6px;padding:16px 20px;margin:20px 0 30px;font-size:14px}
+.toc b{display:block;margin-bottom:6px}
+.toc ol{margin-left:20px}
+</style>
+</head>
+<body>
+<div class="doc">
+
+<h1>EMT·QQ 客户端「双账号 · 双重身份」功能技术文档</h1>
+<div class="meta">文档编号：EMT-TECH-001 ｜ 版本：v1.0 ｜ 适用范围：EMT·QQ 网页客户端（qq-client.html）</div>
+
+<div class="toc">
+<b>目录</b>
+<ol>
+  <li>功能概述</li>
+  <li>系统架构</li>
+  <li>双 WebSocket 连接的建立</li>
+  <li>身份数据的分类存储</li>
+  <li>消息发送的路由机制</li>
+  <li>身份切换与界面联动</li>
+  <li>共同群权限控制</li>
+  <li>消息去重机制</li>
+  <li>自己消息的账号标识</li>
+  <li>设置项与持久化</li>
+  <li>已知问题与注意事项</li>
+  <li>免责声明</li>
+</ol>
+</div>
+
+<h2>一、功能概述</h2>
+<p>本客户端支持在一台计算机上同时连接两个 NapCat 实例（对应两个 QQ 账号），并在不重新登录、不中断会话的前提下，通过点击输入栏的头像按钮即时切换消息发送身份。切换过程为毫秒级，两个账号的消息收发互不干扰。</p>
+<p>功能要点：</p>
+<ul>
+  <li>双账号同时在线，各自独立收发消息；</li>
+  <li>点击头像按钮即可切换发送身份，附带缩放过渡动画；</li>
+  <li>仅在两个账号共同所在的群内允许切换身份；</li>
+  <li>开启"显示昵称"后，自己发出的消息将标注发送账号昵称，便于区分。</li>
+</ul>
+
+<h2>二、系统架构</h2>
+<p>本功能采用"双实例 + 双连接 + 单客户端"架构：</p>
+<table>
+  <tr><th>层级</th><th>组件</th><th>职责</th></tr>
+  <tr><td>协议层</td><td>NapCat 实例 1（账号 A）</td><td>QQ 登录、消息收发、协议解析，WS 监听 8084 端口</td></tr>
+  <tr><td>协议层</td><td>NapCat 实例 2（账号 B）</td><td>同上，WS 监听 3001 端口</td></tr>
+  <tr><td>服务层</td><td>server-proxy.cjs</td><td>监听 8098 端口，提供 /ws-config 配置分发、图片与 AI 接口代理</td></tr>
+  <tr><td>客户端</td><td>qq-client.html</td><td>建立两条 WebSocket 连接，按当前身份路由发送与渲染</td></tr>
+</table>
+<p>NapCat 本身支持多实例运行：每个账号使用独立的配置目录（config/onebot11_&lt;QQ号&gt;.json），端口各自错开即可共存。因此双账号功能无需修改协议层，全部改动集中于客户端的连接管理与路由逻辑。</p>
+<p>需要说明的是：QQ 协议解析由 NapCat 完成，界面框架基于 Stapxs QQ Lite 开源项目，本文档所述的双账号胶水逻辑为本项目自行实现部分。</p>
+
+<h2>三、双 WebSocket 连接的建立</h2>
+<p>连接入口为 dc() 函数。页面加载后读取两个账号的地址与令牌，分别建立 WebSocket 连接，并在各自的 onmessage 回调中携带身份标识（acc）：</p>
+<pre><code>function dc() {
+  // 账号 A（老号）：WS 8084
+  var a = document.getElementById('addr').value.trim();
+  var t = document.getElementById('token').value.trim();
+  var u = a.startsWith('ws') ? a : 'ws://' + a;
+  if (t) u += '?access_token=' + encodeURIComponent(t);
+  ws = new WebSocket(u);
+  ws.onmessage = function(ev){ hm(JSON.parse(ev.data), 0); };  // acc = 0
+
+  // 账号 B（新号）：WS 3001
+  var a2 = document.getElementById('addr2').value.trim();
+  var t2 = document.getElementById('token2').value.trim();
+  if (a2) {
+    var u2 = a2.startsWith('ws') ? a2 : 'ws://' + a2;
+    if (t2) u2 += '?access_token=' + encodeURIComponent(t2);
+    wsB = new WebSocket(u2);
+    wsB.onmessage = function(ev){ hm(JSON.parse(ev.data), 1); };  // acc = 1
+  }
+}</code></pre>
+<p>acc 参数是整套身份体系的核心标识：0 代表账号 A，1 代表账号 B。此后所有响应分发、数据存储、发送路由均以此参数为依据。</p>
+
+<h2>四、身份数据的分类存储</h2>
+<p>所有按账号区分的响应在 ha() 函数中分流存储。核心变量：</p>
+<table>
+  <tr><th>变量</th><th>含义</th></tr>
+  <tr><td>siA / snA</td><td>账号 A 的 QQ 号与昵称</td></tr>
+  <tr><td>siB / snB</td><td>账号 B 的 QQ 号与昵称</td></tr>
+  <tr><td>curAcc</td><td>当前激活的身份（0 或 1）</td></tr>
+  <tr><td>fr / gr</td><td>账号 A 的好友列表、群列表（界面主显示）</td></tr>
+  <tr><td>frB / grB</td><td>账号 B 的好友、群列表（仅用于共同群判断，不显示）</td></tr>
+</table>
+<pre><code>function ha(r, acc) {
+  var d = r.data;
+  if (d.user_id &amp;&amp; d.nickname !== undefined) {
+    if (acc === 1) { siB = d.user_id; snB = d.nickname; }
+    else          { siA = d.user_id; snA = d.nickname; }
+    if (acc === curAcc) { si = siB; sn = snB; }
+    accSyncUi();  // 同步界面头像按钮
+    return;
+  }
+  // 好友/群列表同样按 acc 分存
+  if (Array.isArray(d) &amp;&amp; d[0].user_id !== undefined) {
+    acc === 1 ? (frB = d) : (fr = d);
+    rl(); return;
+  }
+}</code></pre>
+
+<h2>五、消息发送的路由机制</h2>
+<p>所有 API 请求统一经由 sa2() 发送，按 acc 选择对应的 WebSocket：</p>
+<pre><code>function sa2(a, p, e, acc) {
+  var sock = acc === 1 ? wsB : (wsA || ws);
+  if (!sock || sock.readyState !== 1) return;
+  sock.send(JSON.stringify({
+    action: a, params: p || {}, echo: e || randomEcho()
+  }));
+}</code></pre>
+<p>发送链路：用户在输入栏点击发送 → sm() 组装消息并附带当前身份（acc: curAcc）→ 调用 sa2('send_msg', 参数, echo, curAcc) → 由 sa2 将请求投递至对应账号的 NapCat → NapCat 以该账号身份发出消息。切换身份的本质是更换发送出口，因此无需重新连接或登录。</p>
+
+<h2>六、身份切换与界面联动</h2>
+<p>点击输入栏的头像按钮触发 accSwitch()：</p>
+<pre><code>function accSwitch() {
+  var na = curAcc === 0 ? 1 : 0;
+  // 共同群限制
+  if (na === 1 &amp;&amp; cc.type === 'g' &amp;&amp; !isSharedGroup(cc.id)) {
+    toast('该群只有账号1在，无法切换');
+    return;
+  }
+  // 头像缩回动画
+  document.querySelectorAll('#dualImg,#dualImg2').forEach(function(im){
+    im.style.transition = 'transform 0.15s ease-in';
+    im.style.transform = 'scale(0)';
+  });
+  setTimeout(function(){
+    curAcc = na; si = (na === 1 ? siB : siA); sn = (na === 1 ? snB : snA);
+    accSyncUi();
+    // 新头像弹出动画（回弹曲线）
+    // transform: scale(1)，transition: cubic-bezier(0.34,1.56,0.64,1)
+  }, 150);
+}</code></pre>
+<p>界面联动由 accSyncUi() 完成：更新头像按钮的图片地址（ga(siA/siB)）、更新按钮提示文字，并控制 AI 润色按钮与头像按钮的显隐切换（开启双重身份时，AI 按钮隐藏、头像按钮原位显示）。</p>
+
+<h2>七、共同群权限控制</h2>
+<p>为避免在账号 B 不存在的群内使用其身份发送消息，系统限制身份切换仅允许在两个账号的共同群中进行：</p>
+<pre><code>function isSharedGroup(gid) {
+  return (grB || []).some(function(g){
+    return String(g.group_id) === String(gid);
+  });
+}</code></pre>
+<p>grB 为账号 B 的群列表，在连接成功后拉取一次，仅用于交集判断，不参与界面显示。账号 B 不在当前群时，切换请求被拒绝并给出提示。</p>
+
+<h2>八、消息去重机制</h2>
+<p>双账号环境下存在两类消息重复问题，需分别处理。</p>
+<h3>8.1 群消息双推去重</h3>
+<p>两个账号同时存在于同一群时，群消息会分别从两个 NapCat 实例推送，且两个实例对同一条消息分配的 message_id 不同，无法按 ID 去重。解决方案是采用内容签名加时间戳的组合键：</p>
+<pre><code>// 群消息专用去重
+var sig = '';
+d.message.forEach(function(m){ sig += m.data.text || '[img]'; });
+var key = ci + '_s_' + sig + '_' + d.time;
+if (sms[key]) return;  // 第二条推送被丢弃
+sms[key] = 1;</code></pre>
+<p>同一条群消息在两个实例推送时的文本内容与时间戳完全一致，因此第二条必然命中去重。</p>
+<h3>8.2 自发消息回显去重</h3>
+<p>自己发送消息后，NapCat 会将消息回推。客户端在发送瞬间已插入"乐观气泡"（本地立即显示），若回显再次插入将产生重复。处理方式：</p>
+<pre><code>// _selfMerge：回显与本地乐观消息匹配时，仅回填真实 message_id 并返回 true
+function _selfMerge(cid, raw, time, mid) {
+  // 文本归一化（TGS 标签转 Unicode）后比对
+  if (tn === tl &amp;&amp; Math.abs(time - m.time) &lt; 120) {
+    m.id = mid;   // 回填真实消息 ID（供阅后即撤使用）
+    return true;  // 合并成功，不重复添加
+  }
+}
+// 兜底：身份属于 siA 或 siB 的回显，即使未匹配乐观消息也直接丢弃
+var isMy = d.user_id === siA || d.user_id === siB;
+if (isMy) { _selfMerge(...); return; }</code></pre>
+
+<h2>九、自己消息的账号标识</h2>
+<p>为区分"当前气泡由哪个账号发出"，本地消息在插入时记录发送身份：</p>
+<pre><code>mh[id].push({ ..., acc: curAcc });</code></pre>
+<p>渲染时，若开启"自己消息显示昵称"（dnnShow），群聊中的自己消息气泡上方显示对应账号昵称（使用主题色），对方消息保持原样。_selfMerge 合并回显时保留原消息对象，仅更新 id 与 time，因此 acc 标识在合并后依然准确。</p>
+
+<h2>十、设置项与持久化</h2>
+<table>
+  <tr><th>设置项</th><th>存储键</th><th>作用</th></tr>
+  <tr><td>双重身份开关</td><td>qdual</td><td>开启后 AI 润色按钮原位替换为身份切换头像按钮</td></tr>
+  <tr><td>自己消息显示昵称</td><td>dnnShow（内存变量）</td><td>开启后自己消息气泡标注发送账号昵称</td></tr>
+</table>
+<p>设置值通过 localStorage 持久化，刷新页面后保持。全部为前端本地存储，无服务端依赖。</p>
+
+<h2>十一、已知问题与注意事项</h2>
+<ol>
+  <li><b>端口冲突：</b>两个 NapCat 实例的 WS/HTTP 端口必须错开，否则后启动的实例无法监听。</li>
+  <li><b>令牌独立：</b>每个实例的 access_token 独立配置，连接时必须分别携带，不可混用。</li>
+  <li><b>acc 参数完整性：</b>ha() 等响应处理函数的签名必须显式声明 acc 参数（function ha(r, acc)），遗漏将引发 ReferenceError，导致列表加载中断。</li>
+  <li><b>群消息时序：</b>好友列表响应存在约 1.5 秒延迟（NapCat 处理耗时），列表重发间隔需预留充足时间（本项目设为 4 秒）。</li>
+  <li><b>头像 URL：</b>QQ 头像接口对 s 参数取值有要求（s=80 可能返回 400），本项目统一使用 s=100。</li>
+  <li><b>浏览器缓存：</b>客户端 HTML 更新后需强制刷新（Ctrl+Shift+R），服务端已配置 no-store 响应头以降低缓存概率。</li>
+  <li><b>服务器进程：</b>server-proxy 进程异常退出会导致页面无法加载，可通过检查 8098 端口监听状态确认。</li>
+  <li><b>同一账号重复连接：</b>重新连接前必须重置初始化标记（_acc0Ready/_acc1Ready），否则列表加载逻辑不会重新执行。</li>
+</ol>
+
+<h2>十二、免责声明</h2>
+<div class="disclaimer">
+<b>仅供学习参考</b><br>
+本技术文档及所描述的功能实现，仅用于个人学习、研究与技术交流目的，不构成任何商业用途或生产环境部署建议。<br><br>
+1. 本项目所使用的 QQ 协议层组件（NapCat）及界面框架（Stapxs QQ Lite）均为第三方开源项目，版权归各自作者所有；<br>
+2. 本文档涉及的多账号并发登录、消息撤回等能力，请遵守腾讯 QQ 用户协议及所在地区法律法规，用户需自行承担使用风险；<br>
+3. 文档中的代码片段为技术原理演示，未做完整性与安全性加固，请勿直接用于生产环境；<br>
+4. 本项目与腾讯公司无任何关联，腾讯 QQ 为腾讯公司注册商标；<br>
+5. 如文档内容涉及侵权，请联系作者删除。<br><br>
+<b>任何人因使用本文档内容造成的任何损失，作者不承担任何责任。使用即视为同意以上条款。</b>
+</div>
+
+</div>
+</body>
+</html>
